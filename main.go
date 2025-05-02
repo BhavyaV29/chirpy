@@ -5,15 +5,23 @@ import (
 	"fmt"
 )
 func main(){
-mux := http.NewServeMux()
+	//making router
+	mux := http.NewServeMux()
 
-server:= &http.Server{
-	Handler:mux,
-	Addr:":8080",
-}
+	//defining handler
+	mux.Handle("/",http.FileServer(http.Dir(".")))
+	
+	//setting up server
+	server:= &http.Server{
+		Handler:mux,
+		Addr:":8080",
+	}
 
-err:=server.ListenAndServe()
-if err!= nil{
-	fmt.Println(err)
-}
+
+	err:=server.ListenAndServe()
+	if err!= nil{
+		fmt.Println(err)
+	}
+	
+
 }
