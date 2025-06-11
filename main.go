@@ -1,16 +1,35 @@
 package main
 
 import (
+	_ "github.com/lib/pq"
 	"net/http"
 	"fmt"
 	"sync/atomic"
 	"encoding/json"
 	"strings"
+	"github.com/BhavyaV29/chirpy/internal/database"
+	"github.com/google/uuid"
+	"time"
+	"github.com/joho/godotenv"
+	"os"
+	"database/sql"
 )
 
 type apiConfig struct{
 	fileserverHits atomic.Int32
+	db *database.Queries
+	platform string
+	
 }
+
+//our user struct
+type User struct{
+	ID 		  uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email 	  string	`json:"email"`
+}
+
 //helper functions
 func respondWithJSON(w http.ResponseWriter, code int, payload interface{})error{
 	data,err:=json.Marshal(payload)
@@ -48,7 +67,18 @@ func (cfg *apiConfig) hitCountHandler(w http.ResponseWriter, r *http.Request){
 
 func (cfg *apiConfig) resetHitHandler(w http.ResponseWriter, r *http.Request){
 	cfg.fileserverHits.Store(0)
+	if cfg.platform=="dev"{
+		err:=cfg.db.DeleteUsers(r.Context())
+		if err!=nil{
+			respondWithError(w,500,"failed to delete db")
+			return
+		}
+	}else{
+		respondWithError(w,403,"403 Forbidden")
+		return
+	}
 	w.Write([]byte("reset\n"))
+	return
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler{
@@ -127,10 +157,60 @@ func validateChirpHandler(w http.ResponseWriter, r *http.Request){
 
 }
 
+//user creation handler
+func (cfg *apiConfig) CreateUserHandler( w http.ResponseWriter,r *http.Request){
+	type Email struct{
+		Email string `json:"email"`
+	}
+	//decoding email and handling error
+	decoder:=json.NewDecoder(r.Body)
+	ourEmail:= Email{}
+	err:= decoder.Decode(&ourEmail)
+	if err !=nil{
+		respondWithError(w,400,"email format wrong")
+		return
+	}
+	//creating user using email
+	user, err := cfg.db.CreateUser(r.Context(), ourEmail.Email)
+	if err!= nil{
+		respondWithError(w,500,"User not created")
+		return
+	}
+
+	ourUser:=User{
+		ID: user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email: user.Email,
+	}
+	respondWithJSON(w,201,ourUser)
+	return
+
+
+
+}
+
 func main(){
-	//making our server hit counter
 	
-	apiCfg:=&apiConfig{}
+	
+	
+	
+	//loading db
+	godotenv.Load()
+	dbURL:=os.Getenv("DB_URL")
+	db,err := sql.Open("postgres",dbURL)
+	queries:=database.New(db)
+
+	//loading platform env value
+	godotenv.Load()
+	platformVal:=os.Getenv("PLATFORM")
+
+	//making our server apiConfig instance
+	apiCfg:=&apiConfig{
+		db : queries,
+		platform : platformVal,
+
+	}
 	
 	//making router
 	mux := http.NewServeMux()
@@ -142,8 +222,10 @@ func main(){
 	//non website handlers
 	mux.Handle("GET /api/healthz",http.HandlerFunc(readinessHandler))
 	mux.Handle("POST /api/validate_chirp",http.HandlerFunc(validateChirpHandler))
+	mux.Handle("POST /api/users",http.HandlerFunc(apiCfg.CreateUserHandler))
 	mux.Handle("GET /admin/metrics",http.HandlerFunc(apiCfg.hitCountHandler))
 	mux.Handle("POST /admin/reset",http.HandlerFunc(apiCfg.resetHitHandler))
+	
 	
 
 	//setting up server
@@ -153,7 +235,7 @@ func main(){
 	}
 
 	//running the server
-	err:=server.ListenAndServe()
+	err=server.ListenAndServe()
 	if err!= nil{
 		fmt.Println(err)
 	}
