@@ -13,6 +13,7 @@ import (
 	"github.com/joho/godotenv"
 	"os"
 	"database/sql"
+	"github.com/BhavyaV29/chirpy/internal/auth"
 	
 )
 
@@ -124,19 +125,31 @@ func badWordReplace(ourString string) string{
 
 //user creation handler
 func (cfg *apiConfig) CreateUserHandler( w http.ResponseWriter,r *http.Request){
-	type Email struct{
+	type Body struct{
+		Password string `json:"password"`
 		Email string `json:"email"`
+
 	}
 	//decoding email and handling error
 	decoder:=json.NewDecoder(r.Body)
-	ourEmail:= Email{}
-	err:= decoder.Decode(&ourEmail)
+	ourBody:= Body{}
+	err:= decoder.Decode(&ourBody)
 	if err !=nil{
-		respondWithError(w,400,"email format wrong")
+		respondWithError(w,400,"Body format wrong")
 		return
 	}
+
+	//hashing password
+	hashedPassword,err:= auth.HashPassword(ourBody.Password)
+	if err!=nil{
+		respondWithError(w,500,"hashing failed")
+		return 
+	}
 	//creating user using email
-	user, err := cfg.db.CreateUser(r.Context(), ourEmail.Email)
+	user, err := cfg.db.CreateUser(r.Context(), database.CreateUserParams{
+		Email: ourBody.Email,
+		HashedPassword: hashedPassword,
+	})
 	if err!= nil{
 		respondWithError(w,500,"User not created")
 		return
@@ -150,6 +163,40 @@ func (cfg *apiConfig) CreateUserHandler( w http.ResponseWriter,r *http.Request){
 	}
 	respondWithJSON(w,201,ourUser)
 	return
+
+}
+//user login handler
+func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request){
+	type Body struct{
+		Password string `json:"password"`
+		Email string `json:"email"`
+	}
+	//decoding our login request
+	decoder:=json.NewDecoder(r.Body)
+	ourBody:=Body{}
+	err:=decoder.Decode(&ourBody)
+	if err!=nil{
+		respondWithError(w,400,"Request body wrong")
+		return
+	}
+	user,err:= cfg.db.GetUserByEmail(r.Context(),ourBody.Email)
+	if err!=nil{
+		respondWithError(w,401,"Incorrect email or password")
+		return
+	}
+	err= auth.CheckPasswordHash(user.HashedPassword,ourBody.Password)
+	if err!= nil{
+		respondWithError(w,401,"Incorrect email password")
+		return
+	}
+	ourUser:=User{
+		ID: user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email: user.Email,
+	}
+	respondWithJSON(w,200,ourUser)
+	
 
 }
 
@@ -298,6 +345,7 @@ func main(){
 	mux.Handle("POST /api/chirps", http.HandlerFunc(apiCfg.chirpsHandler))
 	mux.Handle("GET /api/chirps", http.HandlerFunc(apiCfg.getChirpsHandler))
 	mux.Handle("GET /api/chirps/{chirpID}",http.HandlerFunc(apiCfg.getSingleChirpHandler))
+	mux.Handle("POST /api/login", http.HandlerFunc(apiCfg.loginHandler))
 	mux.Handle("GET /admin/metrics",http.HandlerFunc(apiCfg.hitCountHandler))
 	mux.Handle("POST /admin/reset",http.HandlerFunc(apiCfg.resetHitHandler))
 	
