@@ -21,7 +21,7 @@ type apiConfig struct{
 	fileserverHits atomic.Int32
 	db *database.Queries
 	platform string
-	
+	jwtSecret string
 }
 
 //our user struct
@@ -184,8 +184,8 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request){
 		respondWithError(w,401,"Incorrect email or password")
 		return
 	}
-	err= auth.CheckPasswordHash(user.HashedPassword,ourBody.Password)
-	if err!= nil{
+	correctPass,err:= auth.CheckPasswordHash(user.HashedPassword,ourBody.Password)
+	if err!= nil || correctPass!=true{
 		respondWithError(w,401,"Incorrect email password")
 		return
 	}
@@ -315,20 +315,34 @@ func (cfg *apiConfig) getSingleChirpHandler (w http.ResponseWriter, r *http.Requ
 
 func main(){
 	
-	//loading db
+	//loading db,platform,jwt envs
 	godotenv.Load()
 	dbURL:=os.Getenv("DB_URL")
-	db,err := sql.Open("postgres",dbURL)
-	queries:=database.New(db)
+	if dbURL==""{
+		log.Fatal("DB_URL must be set")
+	}
 
-	//loading platform env value
-	godotenv.Load()
 	platformVal:=os.Getenv("PLATFORM")
+	if platformVal==""{
+		log.Fatal("PLATFORM must be set" )
+	}
+
+	jwtSecret:=os.Getenv("JWT_SECRET")
+	if jwtSecret==""{
+		log.Fatal("JWT_SECRET must be set")
+	}
+	//open db
+	db,err := sql.Open("postgres",dbURL)
+	if err!=nil{
+		log.Fatal("DB opening failed")
+	}
+	queries:=database.New(db)
 
 	//making our server apiConfig instance
 	apiCfg:=&apiConfig{
 		db : queries,
 		platform : platformVal,
+		jwtSecret: jwtSecret
 
 	}
 	
