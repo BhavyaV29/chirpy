@@ -6,6 +6,8 @@ import(
 	"fmt"
 	"time"
 	"github.com/google/uuid"
+	"strings"
+	"net/http"
 )
 //hashing password while user creation func
 func HashPassword(password string) (string,error){
@@ -62,6 +64,24 @@ func ValidateJWT(tokenString,tokenSecret string)(uuid.UUID, error){
 	
 	return id,nil
 
+
+}
+
+func GetBearerToken(headers http.Header)(string,error){
+	stringValue:=headers.Get("Authorization")
+	if stringValue==""{
+		return "",fmt.Errorf("authorization header missing")
+	}
+	prefix:="Bearer "
+	if !strings.HasPrefix(stringValue,prefix){
+		return "",fmt.Errorf("invalid authorization scheme")
+	}
+	stringPrefixTrmmed:=strings.TrimPrefix(stringValue,prefix)
+	tokenString:=strings.TrimSpace(stringPrefixTrmmed)
+	if tokenString==""{
+		return "",fmt.Errorf("empty token string")
+	}
+	return tokenString,nil
 
 }
 

@@ -14,6 +14,7 @@ import (
 	"os"
 	"database/sql"
 	"github.com/BhavyaV29/chirpy/internal/auth"
+	"log"
 	
 )
 
@@ -30,6 +31,7 @@ type User struct{
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email 	  string	`json:"email"`
+	Token 	  string    `json:"token"`
 }
 type Chirp struct{
 	ID 			uuid.UUID `json:"id"`
@@ -170,7 +172,9 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request){
 	type Body struct{
 		Password string `json:"password"`
 		Email string `json:"email"`
+		ExpiresInSeconds *int64 `json:"expires_in_seconds"` 
 	}
+	
 	//decoding our login request
 	decoder:=json.NewDecoder(r.Body)
 	ourBody:=Body{}
@@ -179,6 +183,19 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request){
 		respondWithError(w,400,"Request body wrong")
 		return
 	}
+	//setting expiresinseconds
+	max:=int64(time.Hour.Seconds())
+	var secs int64
+	if ourBody.ExpiresInSeconds==nil || *ourBody.ExpiresInSeconds<=0{
+		secs=max
+	} else if *ourBody.ExpiresInSeconds>max{
+		secs=max
+	} else{
+		secs=*ourBody.ExpiresInSeconds
+	}
+	exp:=time.Duration(secs)*time.Second
+
+
 	user,err:= cfg.db.GetUserByEmail(r.Context(),ourBody.Email)
 	if err!=nil{
 		respondWithError(w,401,"Incorrect email or password")
@@ -186,14 +203,23 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request){
 	}
 	correctPass,err:= auth.CheckPasswordHash(user.HashedPassword,ourBody.Password)
 	if err!= nil || correctPass!=true{
-		respondWithError(w,401,"Incorrect email password")
+		respondWithError(w,401,"Incorrect email or password")
 		return
 	}
+
+	token,err:=auth.MakeJWT(user.ID,cfg.jwtSecret,exp)
+	if err!=nil{
+		respondWithError(w,401,"JWT token generation failed")
+		return
+	}
+
+
 	ourUser:=User{
 		ID: user.ID,
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 		Email: user.Email,
+		Token: token, 
 	}
 	respondWithJSON(w,200,ourUser)
 	
@@ -205,13 +231,23 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request){
 func (cfg *apiConfig) chirpsHandler(w http.ResponseWriter, r *http.Request){
 	type inputChirp struct{
 		Body string `json:"body"`
-		UserID string `json:"user_id"`
 	}
 	decoder:=json.NewDecoder(r.Body)
 	ourChirp:=inputChirp{}
 	err:=decoder.Decode(&ourChirp)
 	if err!=nil{
 		respondWithError(w,400,"error decoding JSON")
+		return
+	}
+
+	tokenStr,err:=auth.GetBearerToken(r.Header)
+	if err!=nil{
+		respondWithError(w,401,"invalid or missing token")
+		return
+	}
+	userID,err:=auth.ValidateJWT(tokenStr,cfg.jwtSecret)
+	if err!=nil{
+		respondWithError(w,401,"Unauthorized")
 		return
 	}
 
@@ -224,11 +260,11 @@ func (cfg *apiConfig) chirpsHandler(w http.ResponseWriter, r *http.Request){
 	ourChirp.Body=badWordReplace(ourChirp.Body)
 
 	//parse user ID string into uuid.UUID
-	uid,err:= uuid.Parse(ourChirp.UserID)
+	/*uid,err:= uuid.Parse(ourChirp.UserID)
 	if err!=nil{
 		respondWithError(w,400,"invalid user id")
 		return
-	}
+	}*/
 	/*nullUID:=uuid.NullUUID{
 		UUID:uid,
 		Valid:true,
@@ -237,7 +273,7 @@ func (cfg *apiConfig) chirpsHandler(w http.ResponseWriter, r *http.Request){
 	//inserting in chirps db
 	params:= database.CreateChirpParams{
 		Body: ourChirp.Body,
-		UserID: uid,
+		UserID: userID,
 	}
 
 	createdChirp,err:= cfg.db.CreateChirp(r.Context(),params)
@@ -256,9 +292,6 @@ func (cfg *apiConfig) chirpsHandler(w http.ResponseWriter, r *http.Request){
 	respondWithJSON(w, 201, resp)
 	
 	return 
-
-	
-	
 }
 
 func (cfg *apiConfig) getChirpsHandler (w http.ResponseWriter, r *http.Request){
@@ -334,7 +367,7 @@ func main(){
 	//open db
 	db,err := sql.Open("postgres",dbURL)
 	if err!=nil{
-		log.Fatal("DB opening failed")
+		log.Fatal("opening DB: %v", err)
 	}
 	queries:=database.New(db)
 
@@ -342,7 +375,7 @@ func main(){
 	apiCfg:=&apiConfig{
 		db : queries,
 		platform : platformVal,
-		jwtSecret: jwtSecret
+		jwtSecret: jwtSecret,
 
 	}
 	
