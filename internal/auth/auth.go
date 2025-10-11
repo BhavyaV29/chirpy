@@ -8,6 +8,8 @@ import(
 	"github.com/google/uuid"
 	"strings"
 	"net/http"
+	"crypto/rand"
+	"encoding/hex"
 )
 //hashing password while user creation func
 func HashPassword(password string) (string,error){
@@ -82,6 +84,21 @@ func GetBearerToken(headers http.Header)(string,error){
 		return "",fmt.Errorf("empty token string")
 	}
 	return tokenString,nil
+
+}
+
+//func to make refresh token
+
+func MakeRefreshToken() (string,error){
+	key:=make([]byte,32)
+	_,err:=rand.Read(key)
+	if err!=nil{
+		return "",err
+	}
+	encodedToken:=hex.EncodeToString(key)
+
+	return encodedToken,nil
+
 
 }
 

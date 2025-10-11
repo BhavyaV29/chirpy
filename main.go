@@ -15,6 +15,7 @@ import (
 	"database/sql"
 	"github.com/BhavyaV29/chirpy/internal/auth"
 	"log"
+	"errors"
 	
 )
 
@@ -32,6 +33,7 @@ type User struct{
 	UpdatedAt time.Time `json:"updated_at"`
 	Email 	  string	`json:"email"`
 	Token 	  string    `json:"token"`
+	RefreshToken string `json:"refresh_token"`
 }
 type Chirp struct{
 	ID 			uuid.UUID `json:"id"`
@@ -172,7 +174,7 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request){
 	type Body struct{
 		Password string `json:"password"`
 		Email string `json:"email"`
-		ExpiresInSeconds *int64 `json:"expires_in_seconds"` 
+		//ExpiresInSeconds *int64 `json:"expires_in_seconds"` 
 	}
 	
 	//decoding our login request
@@ -185,16 +187,15 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request){
 	}
 	//setting expiresinseconds
 	max:=int64(time.Hour.Seconds())
-	var secs int64
+	/*var secs int64
 	if ourBody.ExpiresInSeconds==nil || *ourBody.ExpiresInSeconds<=0{
 		secs=max
 	} else if *ourBody.ExpiresInSeconds>max{
 		secs=max
 	} else{
 		secs=*ourBody.ExpiresInSeconds
-	}
-	exp:=time.Duration(secs)*time.Second
-
+	}*/
+	
 
 	user,err:= cfg.db.GetUserByEmail(r.Context(),ourBody.Email)
 	if err!=nil{
@@ -207,6 +208,22 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request){
 		return
 	}
 
+	refresh_token,err:=auth.MakeRefreshToken()
+	if err!=nil{
+		respondWithError(w,401,"failed to create refresh token")
+	}
+	refreshTokenParams:=database.CreateRefreshTokenParams{
+		Token: refresh_token,
+		UserID: user.ID,
+		ExpiresAt: time.Now().Add(time.Hour*24 * 60),
+		RevokedAt: sql.NullTime{Valid:false},
+	}
+
+	refreshToken,err:=cfg.db.CreateRefreshToken(r.Context(),refreshTokenParams)
+	if err!=nil{
+		respondWithError(w,500,"database error creating refresh token")
+	}
+	exp:=time.Duration(max)*time.Second
 	token,err:=auth.MakeJWT(user.ID,cfg.jwtSecret,exp)
 	if err!=nil{
 		respondWithError(w,401,"JWT token generation failed")
@@ -220,12 +237,61 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request){
 		UpdatedAt: user.UpdatedAt,
 		Email: user.Email,
 		Token: token, 
+		RefreshToken: refreshToken.Token,
 	}
 	respondWithJSON(w,200,ourUser)
 	
 
 }
 
+//refresh handler to make new access token
+
+func(cfg *apiConfig) refreshHandler(w http.ResponseWriter, r *http.Request){
+	refreshToken,err:=auth.GetBearerToken(r.Header)
+	if err!=nil{
+		respondWithError(w,401,"invalid or missing refresh token")
+		return
+	}
+	userID,err:=cfg.db.GetUserFromRefreshToken(r.Context(),refreshToken)
+	
+	if err!=nil{
+		if errors.Is(err,sql.ErrNoRows){
+			respondWithError(w,401,"invalid,expired or revoked refresh token")
+			return
+		}
+		respondWithError(w,500,"database error")
+		return
+	}
+	//1 hour expiry
+	
+	expiresIn:=1*time.Hour
+	newAccessToken,err:=auth.MakeJWT(userID,cfg.jwtSecret,expiresIn)
+	if err!=nil{
+		respondWithError(w,500,"new access token creation failed")
+		return
+	}
+	respondWithJSON(w,200,map[string]string{"token":newAccessToken})
+}
+//revoke Handler to revoke refresh token
+func (cfg *apiConfig) revokeHandler(w http.ResponseWriter, r *http.Request){
+	refreshToken,err:=auth.GetBearerToken(r.Header)
+	if err!=nil{
+		respondWithError(w,401,"invalid or missing refresh token in header")
+	}
+
+	_,err=cfg.db.RevokeRefreshToken(r.Context(),refreshToken)
+	if err!=nil{
+		if errors.Is(err,sql.ErrNoRows){
+			respondWithError(w,401,"invalid token")
+			return
+		}
+		respondWithError(w,500,"database error")
+		return
+	}
+	
+	w.WriteHeader(http.StatusNoContent) //204, no body
+
+}
 //chirp creation handler
 
 func (cfg *apiConfig) chirpsHandler(w http.ResponseWriter, r *http.Request){
@@ -393,6 +459,8 @@ func main(){
 	mux.Handle("GET /api/chirps", http.HandlerFunc(apiCfg.getChirpsHandler))
 	mux.Handle("GET /api/chirps/{chirpID}",http.HandlerFunc(apiCfg.getSingleChirpHandler))
 	mux.Handle("POST /api/login", http.HandlerFunc(apiCfg.loginHandler))
+	mux.Handle("POST /api/refresh",http.HandlerFunc(apiCfg.refreshHandler))
+	mux.Handle("POST /api/revoke", http.HandlerFunc(apiCfg.revokeHandler))
 	mux.Handle("GET /admin/metrics",http.HandlerFunc(apiCfg.hitCountHandler))
 	mux.Handle("POST /admin/reset",http.HandlerFunc(apiCfg.resetHitHandler))
 	
