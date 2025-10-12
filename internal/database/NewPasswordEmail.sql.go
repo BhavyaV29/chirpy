@@ -16,7 +16,7 @@ const newPasswordEmail = `-- name: NewPasswordEmail :one
 UPDATE users
 SET email=$1,hashed_password=$2 
 WHERE id=$3
-RETURNING id,email,created_at,updated_at
+RETURNING id,email,created_at,updated_at,is_chirpy_red
 `
 
 type NewPasswordEmailParams struct {
@@ -26,10 +26,11 @@ type NewPasswordEmailParams struct {
 }
 
 type NewPasswordEmailRow struct {
-	ID        uuid.UUID
-	Email     string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID          uuid.UUID
+	Email       string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	IsChirpyRed bool
 }
 
 func (q *Queries) NewPasswordEmail(ctx context.Context, arg NewPasswordEmailParams) (NewPasswordEmailRow, error) {
@@ -40,6 +41,7 @@ func (q *Queries) NewPasswordEmail(ctx context.Context, arg NewPasswordEmailPara
 		&i.Email,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsChirpyRed,
 	)
 	return i, err
 }

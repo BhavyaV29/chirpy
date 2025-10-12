@@ -34,6 +34,7 @@ type User struct{
 	Email 	  string	`json:"email"`
 	Token 	  string    `json:"token"`
 	RefreshToken string `json:"refresh_token"`
+	IsChirpyRed bool `json:"is_chirpy_red"`
 }
 type Chirp struct{
 	ID 			uuid.UUID `json:"id"`
@@ -164,6 +165,7 @@ func (cfg *apiConfig) CreateUserHandler( w http.ResponseWriter,r *http.Request){
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 		Email: user.Email,
+		IsChirpyRed: user.IsChirpyRed,
 	}
 	respondWithJSON(w,201,ourUser)
 	return
@@ -180,6 +182,7 @@ func (cfg *apiConfig) updateUserHandler(w http.ResponseWriter, r *http.Request){
 		Email string `json:"email"`
 		CreatedAt time.Time `json:"created_at"`
 		UpdatedAt time.Time `json:"updated_at"`
+		IsChirpyRed bool `json:"is_chirpy_red"`
 	}
 	//authenticating jwt
 	accessTokenReceived,err:=auth.GetBearerToken(r.Header)
@@ -230,6 +233,7 @@ func (cfg *apiConfig) updateUserHandler(w http.ResponseWriter, r *http.Request){
 		Email:updatedUser.Email,
 		CreatedAt:updatedUser.CreatedAt,
 		UpdatedAt:updatedUser.UpdatedAt,
+		IsChirpyRed: updatedUser.IsChirpyRed,
 	}
 	respondWithJSON(w,200,responseUser)
 }
@@ -304,6 +308,7 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request){
 		Email: user.Email,
 		Token: token, 
 		RefreshToken: refreshToken.Token,
+		IsChirpyRed:user.IsChirpyRed,
 	}
 	respondWithJSON(w,200,ourUser)
 	
@@ -472,7 +477,7 @@ func(cfg *apiConfig) deleteChirpHandler(w http.ResponseWriter, r *http.Request){
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-
+//get chirps 
 func (cfg *apiConfig) getChirpsHandler (w http.ResponseWriter, r *http.Request){
 	dbChirps,err:=cfg.db.GetChirps(r.Context())
 	if err!=nil{
@@ -494,7 +499,7 @@ func (cfg *apiConfig) getChirpsHandler (w http.ResponseWriter, r *http.Request){
 	respondWithJSON(w,200,listChirps)
 	return
 }
-
+//get single chirpy by id
 func (cfg *apiConfig) getSingleChirpHandler (w http.ResponseWriter, r *http.Request){
 	chirpID:= r.PathValue("chirpID")
 	if len(chirpID)==0{
@@ -524,7 +529,42 @@ func (cfg *apiConfig) getSingleChirpHandler (w http.ResponseWriter, r *http.Requ
 	}
 	respondWithJSON(w,200,responseChirp)
 }
+//webhook upgrade chirpy red handler
+func(cfg *apiConfig) webhookUpgradeHandler(w http.ResponseWriter, r *http.Request){
+	type webhookData struct{
+		UserID uuid.UUID `json:"user_id"`
+	}
+	type Request struct{
+		Event string `json:"event"`
+		Data webhookData `json:"data"`
+	}
+	decoder:=json.NewDecoder(r.Body)
+	request:=Request{}
+	err:=decoder.Decode(&request); if err!=nil{
+		respondWithError(w,400,"invalid request format")
+		return
+	}
+	if request.Event!="user.upgraded"{
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	_,err=cfg.db.UpgradeChirpyRed(r.Context(),request.Data.UserID)
+	if err!=nil{
+		if errors.Is(err,sql.ErrNoRows){
+			respondWithError(w,404,"user does not exist")
+			return
+		}
+		respondWithError(w,500,"db error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 
+
+}
+
+
+
+//main func
 func main(){
 	
 	//loading db,platform,jwt envs
@@ -576,6 +616,7 @@ func main(){
 	mux.Handle("POST /api/login", http.HandlerFunc(apiCfg.loginHandler))
 	mux.Handle("POST /api/refresh",http.HandlerFunc(apiCfg.refreshHandler))
 	mux.Handle("POST /api/revoke", http.HandlerFunc(apiCfg.revokeHandler))
+	mux.Handle("POST /api/polka/webhooks", http.HandlerFunc(apiCfg.webhookUpgradeHandler))
 	mux.Handle("GET /admin/metrics",http.HandlerFunc(apiCfg.hitCountHandler))
 	mux.Handle("POST /admin/reset",http.HandlerFunc(apiCfg.resetHitHandler))
 	
