@@ -68,6 +68,7 @@ func ValidateJWT(tokenString,tokenSecret string)(uuid.UUID, error){
 
 
 }
+//func to get bearer token from header
 
 func GetBearerToken(headers http.Header)(string,error){
 	stringValue:=headers.Get("Authorization")
@@ -86,6 +87,25 @@ func GetBearerToken(headers http.Header)(string,error){
 	return tokenString,nil
 
 }
+
+//func to getapi key form header
+func GetAPIKey(headers http.Header)(string,error){
+	stringValue:=headers.Get("Authorization")
+	if stringValue==""{
+		return "",fmt.Errorf("authorization header missing")
+	}
+	prefix:="ApiKey "
+	if !strings.HasPrefix(stringValue,prefix){
+		return "",fmt.Errorf("invalid authorization scheme")
+	}
+	stringPrefixTrimmed:=strings.TrimPrefix(stringValue,prefix)
+	apiString:=strings.TrimSpace(stringPrefixTrimmed)
+	if apiString==""{
+		return "",fmt.Errorf("empty api key string")
+	}
+	return apiString,nil
+}
+
 
 //func to make refresh token
 

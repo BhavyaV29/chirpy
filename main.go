@@ -16,6 +16,7 @@ import (
 	"github.com/BhavyaV29/chirpy/internal/auth"
 	"log"
 	"errors"
+	"sort"
 	
 )
 
@@ -24,6 +25,7 @@ type apiConfig struct{
 	db *database.Queries
 	platform string
 	jwtSecret string
+	polkaKey string
 }
 
 //our user struct
@@ -479,11 +481,34 @@ func(cfg *apiConfig) deleteChirpHandler(w http.ResponseWriter, r *http.Request){
 }
 //get chirps 
 func (cfg *apiConfig) getChirpsHandler (w http.ResponseWriter, r *http.Request){
-	dbChirps,err:=cfg.db.GetChirps(r.Context())
-	if err!=nil{
-		respondWithError(w,500,"Failed to retrive chirps from db")
-		return
+	var dbChirps []database.Chirp
+	optionalQuerySort:=r.URL.Query().Get("sort")
+	strings.ToLower(optionalQuerySort)
+	optionalQueryAuthor:=r.URL.Query().Get("author_id")
+	if optionalQueryAuthor!=""{
+		authorID,err:=uuid.Parse(optionalQueryAuthor)
+		if err!=nil{
+			respondWithError(w,400,"author_id parse error")
+			return
+		}
+		dbChirps,err=cfg.db.GetChirpsByUser(r.Context(),authorID)
+		if err!=nil{
+			if errors.Is(err,sql.ErrNoRows){
+				respondWithError(w,400,"author does not exist")
+				return
+			}
+			respondWithError(w,500,"db error")
+			return
+		}
+	}else{
+		var err error
+		dbChirps,err=cfg.db.GetChirps(r.Context())
+		if err!=nil{
+			respondWithError(w,500,"Failed to retrive chirps from db")
+			return
+		}
 	}
+
 	listChirps:=[]Chirp{}
 	for _,dbChirp :=range dbChirps{
 		singleChirp:=Chirp{
@@ -494,6 +519,12 @@ func (cfg *apiConfig) getChirpsHandler (w http.ResponseWriter, r *http.Request){
 			UpdatedAt: dbChirp.UpdatedAt,
 		}
 		listChirps=append(listChirps,singleChirp)
+
+	}
+	if optionalQuerySort=="desc"{
+		sort.Slice(listChirps,func(i,j int) bool{
+			return listChirps[j].CreatedAt.Before(listChirps[i].CreatedAt)
+		})
 
 	}
 	respondWithJSON(w,200,listChirps)
@@ -538,9 +569,19 @@ func(cfg *apiConfig) webhookUpgradeHandler(w http.ResponseWriter, r *http.Reques
 		Event string `json:"event"`
 		Data webhookData `json:"data"`
 	}
+	fetchedAPIstring,err:=auth.GetAPIKey(r.Header)
+	if err!=nil{
+		respondWithError(w,401,"malformed or missing api key format")
+		return
+	}
+	if fetchedAPIstring!=cfg.polkaKey{
+		respondWithError(w,401,"unauthorized api key")
+		return
+	}
+
 	decoder:=json.NewDecoder(r.Body)
 	request:=Request{}
-	err:=decoder.Decode(&request); if err!=nil{
+	if err:=decoder.Decode(&request); err!=nil{
 		respondWithError(w,400,"invalid request format")
 		return
 	}
@@ -558,8 +599,6 @@ func(cfg *apiConfig) webhookUpgradeHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-
-
 }
 
 
@@ -567,7 +606,7 @@ func(cfg *apiConfig) webhookUpgradeHandler(w http.ResponseWriter, r *http.Reques
 //main func
 func main(){
 	
-	//loading db,platform,jwt envs
+	//loading db,platform,jwt,polkakey envs
 	godotenv.Load()
 	dbURL:=os.Getenv("DB_URL")
 	if dbURL==""{
@@ -583,6 +622,11 @@ func main(){
 	if jwtSecret==""{
 		log.Fatal("JWT_SECRET must be set")
 	}
+
+	polkaKey:=os.Getenv("POLKA_KEY")
+	if polkaKey==""{
+		log.Fatal("POLKA_KEY must be set")
+	}
 	//open db
 	db,err := sql.Open("postgres",dbURL)
 	if err!=nil{
@@ -595,6 +639,7 @@ func main(){
 		db : queries,
 		platform : platformVal,
 		jwtSecret: jwtSecret,
+		polkaKey:polkaKey,
 
 	}
 	
@@ -610,7 +655,7 @@ func main(){
 	mux.Handle("POST /api/users",http.HandlerFunc(apiCfg.CreateUserHandler))
 	mux.Handle("PUT /api/users",http.HandlerFunc(apiCfg.updateUserHandler))
 	mux.Handle("POST /api/chirps", http.HandlerFunc(apiCfg.chirpsHandler))
-	mux.Handle("GET /api/chirps", http.HandlerFunc(apiCfg.getChirpsHandler))
+	mux.Handle("GET /api/chirps/", http.HandlerFunc(apiCfg.getChirpsHandler))
 	mux.Handle("GET /api/chirps/{chirpID}",http.HandlerFunc(apiCfg.getSingleChirpHandler))
 	mux.Handle("DELETE /api/chirps/{chirpID}",http.HandlerFunc(apiCfg.deleteChirpHandler))
 	mux.Handle("POST /api/login", http.HandlerFunc(apiCfg.loginHandler))
