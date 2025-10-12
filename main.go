@@ -169,8 +169,74 @@ func (cfg *apiConfig) CreateUserHandler( w http.ResponseWriter,r *http.Request){
 	return
 
 }
+//user update handler
+func (cfg *apiConfig) updateUserHandler(w http.ResponseWriter, r *http.Request){
+	type Body struct{
+		Password string `json:"password"`
+		Email string `json:"email"`
+	}
+	type UserResponse struct{
+		ID uuid.UUID `json:"id"`
+		Email string `json:"email"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+	}
+	//authenticating jwt
+	accessTokenReceived,err:=auth.GetBearerToken(r.Header)
+	if err!=nil{
+		respondWithError(w,401,"malformed or missing access token")
+		return
+	}
+	userID,err:=auth.ValidateJWT(accessTokenReceived,cfg.jwtSecret)
+	if err!=nil{
+		respondWithError(w,401,"Invalid token")
+		return
+	}
+	//decoding request body
+	decoder:=json.NewDecoder(r.Body)
+	requestBody:=Body{}
+	err=decoder.Decode(&requestBody)
+	if err!=nil{
+		respondWithError(w,400,"Bad JSON/body missing fields")
+		return
+	}
+	if requestBody.Email=="" || requestBody.Password==""{
+		respondWithError(w,400,"email and password required")
+		return
+	}
+	//hashing new password and setting both pass and  email
+	newPassword,err:=auth.HashPassword(requestBody.Password)
+	if err!=nil{
+		respondWithError(w,500,"hashing/db failed")
+		return
+	}
+	//putting the new data in the database
+	userNewParams:=database.NewPasswordEmailParams{
+		Email: requestBody.Email,
+		HashedPassword: newPassword,
+		ID: userID,
+	}
+	updatedUser,err:=cfg.db.NewPasswordEmail(r.Context(),userNewParams)
+	if err!=nil{
+		if errors.Is(err,sql.ErrNoRows){
+			respondWithError(w,404,"user not found")
+			return
+		}
+		respondWithError(w,500,"database error")
+		return
+	}
+	responseUser:=UserResponse{
+		ID:updatedUser.ID,
+		Email:updatedUser.Email,
+		CreatedAt:updatedUser.CreatedAt,
+		UpdatedAt:updatedUser.UpdatedAt,
+	}
+	respondWithJSON(w,200,responseUser)
+}
+
 //user login handler
 func (cfg *apiConfig) loginHandler(w http.ResponseWriter, r *http.Request){
+	
 	type Body struct{
 		Password string `json:"password"`
 		Email string `json:"email"`
@@ -359,6 +425,53 @@ func (cfg *apiConfig) chirpsHandler(w http.ResponseWriter, r *http.Request){
 	
 	return 
 }
+//delete chirp handler
+func(cfg *apiConfig) deleteChirpHandler(w http.ResponseWriter, r *http.Request){
+	//authentication
+	token,err:=auth.GetBearerToken(r.Header)
+	if err!=nil{
+		respondWithError(w,401,"malformed or missing token")
+		return
+	}
+	userID,err:=auth.ValidateJWT(token,cfg.jwtSecret)
+	if err!=nil{
+		respondWithError(w,401,"invalid token")
+		return
+	}
+	//extract chirp id from path
+	receivedChirpID:=r.PathValue("chirpID")
+	if len(receivedChirpID)==0{
+		respondWithError(w,400,"path value doesn't match")
+		return
+	}
+	chirpID,err:=uuid.Parse(receivedChirpID)
+	if err!=nil{
+		respondWithError(w,400,"invalid chirp ID")
+		return
+	}
+	//see if chirp exists
+	dbChirp,err:=cfg.db.GetSingleChirp(r.Context(),chirpID)
+	if err!=nil{
+		if errors.Is(err,sql.ErrNoRows){
+			respondWithError(w,404,"chirp not found")
+			return
+		}
+		respondWithError(w,500,"db error")
+		return
+	}
+	//see if authenticated user is owner of the chirp
+	if userID!=dbChirp.UserID{
+		respondWithError(w,403,"user not author of the chirp")
+		return
+	}
+	//delete Chirp
+	err=cfg.db.DeleteChirp(r.Context(),chirpID)
+	if err!=nil{
+		respondWithError(w,500,"db error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
 
 func (cfg *apiConfig) getChirpsHandler (w http.ResponseWriter, r *http.Request){
 	dbChirps,err:=cfg.db.GetChirps(r.Context())
@@ -455,9 +568,11 @@ func main(){
 	//non website handlers
 	mux.Handle("GET /api/healthz",http.HandlerFunc(readinessHandler))
 	mux.Handle("POST /api/users",http.HandlerFunc(apiCfg.CreateUserHandler))
+	mux.Handle("PUT /api/users",http.HandlerFunc(apiCfg.updateUserHandler))
 	mux.Handle("POST /api/chirps", http.HandlerFunc(apiCfg.chirpsHandler))
 	mux.Handle("GET /api/chirps", http.HandlerFunc(apiCfg.getChirpsHandler))
 	mux.Handle("GET /api/chirps/{chirpID}",http.HandlerFunc(apiCfg.getSingleChirpHandler))
+	mux.Handle("DELETE /api/chirps/{chirpID}",http.HandlerFunc(apiCfg.deleteChirpHandler))
 	mux.Handle("POST /api/login", http.HandlerFunc(apiCfg.loginHandler))
 	mux.Handle("POST /api/refresh",http.HandlerFunc(apiCfg.refreshHandler))
 	mux.Handle("POST /api/revoke", http.HandlerFunc(apiCfg.revokeHandler))
