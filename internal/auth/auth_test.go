@@ -5,6 +5,7 @@ import(
 	"time"
 	"github.com/google/uuid"
 	"github.com/BhavyaV29/chirpy/internal/auth"
+	"net/http"
 )
 //tests for auth creation and validation funcs
 func TestMakeAndValidateJWT_HappyPath(t *testing.T){

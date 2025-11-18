@@ -630,7 +630,7 @@ func main(){
 	//open db
 	db,err := sql.Open("postgres",dbURL)
 	if err!=nil{
-		log.Fatal("opening DB: %v", err)
+		log.Fatalf("opening DB: %v", err)
 	}
 	queries:=database.New(db)
 
