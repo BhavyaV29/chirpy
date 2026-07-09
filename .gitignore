@@ -1,1 +1,5 @@
 *.env
+
+# Compiled binaries (build locally; don't commit)
+/chirpy
+/out

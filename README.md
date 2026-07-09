@@ -1,179 +1,92 @@
-
 # Chirpy
 
-![Go Version](https://img.shields.io/badge/Go-1.23.5-blue)
-![Build](https://img.shields.io/badge/build-passing-brightgreen)
+[![Go](https://img.shields.io/badge/Go-1.23.5-00ADD8?style=flat&logo=go&logoColor=white)](https://golang.org)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-316192?style=flat&logo=postgresql&logoColor=white)](https://postgresql.org)
+[![SQLC](https://img.shields.io/badge/SQLC-type--safe%20queries-4479A1?style=flat)](https://sqlc.dev)
+[![Goose](https://img.shields.io/badge/migrations-Goose-F58220?style=flat)](https://github.com/pressly/goose)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## 🐦 What is Chirpy?
-
-Chirpy is a lightweight, extensible microblogging platform written in Go. It allows users to post short messages ("chirps"), manage accounts, and interact securely with a PostgreSQL backend. Chirpy is designed for learning, experimentation, and as a foundation for building more complex social applications.
-
----
-
-## ✨ Key Features
-
-- User registration and authentication (JWT-based)
-- Secure password hashing (Argon2id)
-- Post, fetch, and manage chirps (short messages)
-- Refresh token support for session management
-- Admin endpoints for platform management
-- Environment-based configuration (dotenv)
-- Modular, testable Go codebase
-- SQL migrations and code generation (sqlc)
-- RESTful API with clear separation of concerns
+**Production-grade micro-blogging REST API in Go — JWT auth, Argon2id, SQLC data layer, and Polka webhooks for premium upgrades.**
 
 ---
 
-## 🏗️ Design Overview
+## What it does
 
-Chirpy is structured for clarity and extensibility:
-
-- **main.go**: Entry point, HTTP server, routing, and handler registration.
-- **internal/database/**: SQLc-generated database access layer, models, and query logic.
-- **internal/auth/**: Authentication, JWT, password hashing, and token utilities.
-- **sql/schema/**: SQL migration scripts for PostgreSQL schema.
-- **sql/queries/**: SQLc query definitions for CRUD operations.
-- **assets/**: Static assets (e.g., logo).
-
-### Architecture
-
-- **API-first**: All core features are exposed via a RESTful API.
-- **Middleware**: Metrics, authentication, and admin logic are handled via middleware and dedicated handlers.
-- **Environment-driven**: Configuration is loaded from environment variables (dotenv supported).
-- **Security**: Passwords are hashed with Argon2id; JWTs are used for stateless authentication.
+Chirpy is a micro-blogging backend where users register, authenticate, and post short messages ("chirps"). It implements stateless JWT access tokens with refresh token rotation, Argon2id-hashed passwords, and a full CRUD layer over PostgreSQL generated entirely by SQLC. A Polka webhook endpoint allows an external payment provider to toggle premium ("Chirpy Red") membership on a user account — no manual database edits required.
 
 ---
 
-## 📚 Documentation & Technical Reference
+## Key Features
 
-### Project Structure
-
-- [`main.go`](main.go): HTTP server, API endpoints, and handler logic.
-- [`internal/database/`](internal/database/):
-  - `db.go`, `models.go`: Database models and connection logic.
-  - `*.sql.go`: SQLc-generated CRUD/query code for users, chirps, tokens, etc.
-- [`internal/auth/`](internal/auth/):
-  - `auth.go`: Password hashing, JWT creation/validation, API key and bearer token parsing, refresh token generation.
-- [`sql/schema/`](sql/schema/):
-  - `001_users.sql`, `002_chirps.sql`, etc.: PostgreSQL schema migrations for users, chirps, tokens, and premium features.
-- [`sql/queries/`](sql/queries/):
-  - Query definitions for SQLc code generation.
-- [`assets/`](assets/): Static files (e.g., `logo.png`).
-- [`.github/copilot-instructions.md`](.github/copilot-instructions.md): Project documentation and contribution instructions.
-
-### API Endpoints
-
-#### User Management
-- `POST /api/users` — Register a new user
-- `PUT /api/users` — Update user email/password (JWT required)
-- `POST /api/login` — Authenticate and receive JWT/refresh token
-- `POST /api/refresh` — Exchange refresh token for new JWT
-- `POST /api/revoke` — Revoke refresh token
-
-#### Chirps
-- `POST /api/chirps` — Create a new chirp (JWT required)
-- `GET /api/chirps/` — List all chirps (optionally filter/sort)
-- `GET /api/chirps/{chirpID}` — Get a single chirp by ID
-- `DELETE /api/chirps/{chirpID}` — Delete a chirp (JWT required, owner only)
-
-#### Admin & Premium
-- `GET /admin/metrics` — View server metrics
-- `POST /admin/reset` — Reset metrics and (in dev) delete users
-- `POST /api/polka/webhooks` — Webhook for "Chirpy Red" premium upgrades
-
-### Authentication & Security
-
-- Passwords are hashed using Argon2id before storage.
-- JWTs are used for stateless authentication; refresh tokens for session renewal.
-- API keys are used for webhook authentication.
+- **JWT auth with refresh token rotation** — 1h access tokens + long-lived refresh tokens stored and revocable in PostgreSQL
+- **Argon2id password hashing** — credentials never stored in plaintext; hash/verify on every login
+- **SQLC type-safe query layer** — SQL queries compiled to idiomatic Go at build time; no ORM, no `interface{}`
+- **Goose schema migrations** — versioned `sql/schema/` files; reproducible DB setup with one command
+- **Polka webhook** — `POST /api/polka/webhooks` accepts external events to upgrade users to Chirpy Red; validated by API key
+- **Admin tooling** — `GET /admin/metrics` for live request counts; `POST /admin/reset` for dev teardown
 
 ---
 
-## 🚀 Getting Started
+## How it works
 
-### Prerequisites
-- Go 1.23.5 or later
-- PostgreSQL database
-
-### Installation
-
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/BhavyaV29/chirpy.git
-   cd chirpy
-   ```
-2. **Set up environment variables:**
-   - Copy `.env.example` to `.env` and fill in your secrets (DB connection, JWT secret, etc).
-3. **Install dependencies:**
-   ```bash
-   go mod tidy
-   ```
-4. **Set up the database:**
-   - Run the SQL scripts in `sql/schema/` to create tables.
-   - Use `sql/queries/` for query reference.
-5. **Run the server:**
-   ```bash
-   go run main.go
-   ```
-
-### Usage Example
-
-- Register a user:
-  ```http
-  POST /api/users
-  { "email": "user@example.com", "password": "yourpassword" }
-  ```
-- Post a chirp:
-  ```http
-  POST /api/chirps
-  { "body": "Hello, Chirpy!" }
-  ```
+All routing is handled by Go's standard `net/http`. Auth logic lives in `internal/auth` (JWT sign/verify, Argon2id, API key parsing); the database access layer lives in `internal/database` (SQLC-generated from `sql/queries/`). Each handler is a method on `apiConfig`, which carries the DB connection pool and secrets loaded from environment variables. Migrations in `sql/schema/` set up the schema; SQLC regenerates the Go layer whenever queries change.
 
 ---
 
-## 🧩 Extending & Customizing
+## Quick Start
 
-- Add new endpoints by creating handlers in `main.go` and queries in `internal/database/`.
-- Update the database schema via new migration scripts in `sql/schema/`.
-- Use the modular structure to add features (e.g., likes, comments, notifications).
+```bash
+git clone https://github.com/BhavyaV29/chirpy.git
+cd chirpy
+# create a .env with DB_URL, PLATFORM, JWT_SECRET, POLKA_KEY
 
----
+go mod tidy
 
-## 🤝 Contributing
+# apply migrations (requires goose + a running Postgres instance)
+goose -dir sql/schema postgres "$DB_URL" up
 
-Contributions are welcome! Please fork the repo, create a branch, and submit a pull request. For major changes, open an issue first to discuss what you’d like to change.
-
-- See `.github/` for guidelines and instructions
-
----
-
-## 👤 Maintainer
-
-- **Bhavya V**  
-  [GitHub Profile](https://github.com/BhavyaV29)
+go run main.go              # server starts on :8080
+```
 
 ---
 
-## 📝 License
+## API Reference
 
-This project is open source and available under the MIT License.
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/api/users` | — | Register |
+| PUT | `/api/users` | JWT | Update email / password |
+| POST | `/api/login` | — | Get JWT + refresh token |
+| POST | `/api/refresh` | Refresh token | Issue new JWT |
+| POST | `/api/revoke` | Refresh token | Revoke session |
+| POST | `/api/chirps` | JWT | Create chirp |
+| GET | `/api/chirps` | — | List chirps (filterable, sortable) |
+| GET | `/api/chirps/{id}` | — | Get single chirp |
+| DELETE | `/api/chirps/{id}` | JWT (owner) | Delete chirp |
+| POST | `/api/polka/webhooks` | API key | Premium upgrade event |
+| GET | `/admin/metrics` | — | Request counter |
+| POST | `/admin/reset` | — | Dev teardown |
 
-- See [internal/database/](internal/database/) for database models and queries
-- See [internal/auth/](internal/auth/) for authentication logic
-- [sqlc.yaml](sqlc.yaml) for SQL codegen config
-- For issues, open a GitHub issue or contact the maintainer
+---
 
-## 🤝 Contributing
+## Project Structure
 
-Contributions are welcome! Please fork the repo, create a branch, and submit a pull request. For major changes, open an issue first to discuss what you’d like to change.
+```
+chirpy/
+├── main.go                  # server setup, routing, handler registration
+├── internal/
+│   ├── auth/                # JWT sign/verify, Argon2id, API key helpers
+│   └── database/            # SQLC-generated models and queries
+├── sql/
+│   ├── schema/              # Goose migration files (001_users.sql, …)
+│   └── queries/             # SQL definitions read by SQLC
+└── sqlc.yaml                # SQLC codegen config
+```
 
-- See `.github/` for guidelines and instructions
+---
 
-## 👤 Maintainer
+## Maintainer
 
-- **Bhavya V**  
-  [GitHub Profile](https://github.com/BhavyaV29)
+[BhavyaV29](https://github.com/BhavyaV29) · [bhavyaportfolio.site](https://bhavyaportfolio.site)
 
-## 📝 License
-
-This project is open source and available under the MIT License.
+Licensed under the MIT License.
