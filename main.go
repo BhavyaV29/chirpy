@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	_ "github.com/lib/pq"
 	"net/http"
 	"fmt"
@@ -19,6 +20,9 @@ import (
 	"sort"
 	
 )
+
+//go:embed index.html
+var appIndexHTML []byte
 
 type apiConfig struct{
 	fileserverHits atomic.Int32
@@ -68,6 +72,17 @@ func readinessHandler(w http.ResponseWriter,r *http.Request){
 	
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
+}
+
+func appHandler(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/app/" && r.URL.Path != "/app/index.html" {
+		http.NotFound(w, r)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(appIndexHTML)
 }
 
 func (cfg *apiConfig) hitCountHandler(w http.ResponseWriter, r *http.Request){
@@ -647,9 +662,7 @@ func main(){
 	mux := http.NewServeMux()
 
 	//defining handlers
-	fileserver:=http.FileServer(http.Dir("."))
-	appHandler:=http.StripPrefix("/app",fileserver) //stripping path
-	mux.Handle("/app/",apiCfg.middlewareMetricsInc(appHandler))
+	mux.Handle("/app/",apiCfg.middlewareMetricsInc(http.HandlerFunc(appHandler)))
 	//non website handlers
 	mux.Handle("GET /api/healthz",http.HandlerFunc(readinessHandler))
 	mux.Handle("POST /api/users",http.HandlerFunc(apiCfg.CreateUserHandler))
